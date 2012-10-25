@@ -1,0 +1,93 @@
+EXPR(1)                   BSD General Commands Manual                  EXPR(1)
+
+NNAAMMEE
+     eexxpprr — evaluate expression
+
+SSYYNNOOPPSSIISS
+     eexxpprr _e_x_p_r_e_s_s_i_o_n
+
+DDEESSCCRRIIPPTTIIOONN
+     The eexxpprr utility evaluates _e_x_p_r_e_s_s_i_o_n and writes the result on standard
+     output.  All operators are separate arguments to the eexxpprr utility.  Char‐
+     acters special to the command interpreter must be escaped.
+
+     Operators are listed below in order of increasing precedence.  Operators
+     with equal precedence are grouped within { } symbols.
+
+     _e_x_p_r_1 | _e_x_p_r_2
+             Returns the evaluation of _e_x_p_r_1 if it is neither an empty string
+             nor zero; otherwise, returns the evaluation of _e_x_p_r_2.
+
+     _e_x_p_r_1 & _e_x_p_r_2
+             Returns the evaluation of _e_x_p_r_1 if neither expression evaluates
+             to an empty string or zero; otherwise, returns zero.
+
+     _e_x_p_r_1 {=, >, >=, <, <=, !=} _e_x_p_r_2
+             Returns the results of integer comparison if both arguments are
+             integers; otherwise, returns the results of string comparison
+             using the locale-specific collation sequence.  The result of each
+             comparison is 1 if the specified relation is true, or 0 if the
+             relation is false.
+
+     _e_x_p_r_1 {+, -} _e_x_p_r_2
+             Returns the results of addition or subtraction of integer-valued
+             arguments.
+
+     _e_x_p_r_1 {*, /, %} _e_x_p_r_2
+             Returns the results of multiplication, integer division, or
+             remainder of integer-valued arguments.
+
+     _e_x_p_r_1 : _e_x_p_r_2
+             The ‘:’ operator matches _e_x_p_r_1 against _e_x_p_r_2, which must be a
+             basic regular expression.  The regular expression is anchored to
+             the beginning of the string with an implicit ‘^’.
+
+             If the match succeeds and the pattern contains at least one regu‐
+             lar expression subexpression “\(...\)”, the string corresponding
+             to “\1” is returned; otherwise, the matching operator returns the
+             number of characters matched.  If the match fails and the pattern
+             contains a regular expression subexpression the null string is
+             returned; otherwise, returns 0.
+
+             Note: the empty string cannot be matched using
+
+                   expr '' : '$'
+
+             This is because the returned number of matched characters (zero)
+             is indistinguishable from a failed match, so eexxpprr returns failure
+             (0).  To match the empty string, use a structure such as:
+
+                   expr X'' : 'X$'
+
+     Parentheses are used for grouping in the usual manner.
+
+EEXXIITT SSTTAATTUUSS
+     The eexxpprr utility exits with one of the following values:
+
+           0       The expression is neither an empty string nor 0.
+           1       The expression is an empty string or 0.
+           2       The expression is invalid.
+           >2      An error occurred (such as memory allocation failure).
+
+EEXXAAMMPPLLEESS
+     Add 1 to the variable _a:
+
+           $ a=`expr $a + 1`
+
+     Return the filename portion of a pathname stored in variable _a.  The ‘//’
+     characters act to eliminate ambiguity with the division operator:
+
+           $ expr "//$a" : '.*/\(.*\)'
+
+     Return the number of characters in variable _a:
+
+           $ expr $a : '.*'
+
+SSEEEE AALLSSOO
+     test(1), re_format(7)
+
+SSTTAANNDDAARRDDSS
+     The eexxpprr utility is compliant with the IEEE Std 1003.1-2008 (“POSIX.1”)
+     specification.
+
+BSD                            October 25, 2012                            BSD
