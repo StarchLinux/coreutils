@@ -53,6 +53,8 @@ xmalloc(size_t size)
 {
 	void *p;
 
+	if (size == 0) return NULL;
+
 	if ((p = malloc(size)) == NULL)
 		err(FATAL, "%s", strerror(errno));
 	return (p);
@@ -65,7 +67,7 @@ void *
 xrealloc(void *p, size_t size)
 {
 
-	if ((p = realloc(p, size)) == NULL)
+	if ((p = realloc(p, size)) == NULL && size != 0)
 		err(FATAL, "%s", strerror(errno));
 	return (p);
 }
