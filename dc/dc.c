@@ -27,7 +27,7 @@
 
 static void		usage(void);
 
-extern char		*__progname;
+char			*__progname;
 
 static void
 usage(void)
@@ -46,6 +46,8 @@ main(int argc, char *argv[])
 	struct source	src;
 	char		*buf, *p;
 	struct stat	st;
+	
+	__progname = argv[0];
 
 
 	if ((buf = strdup("")) == NULL)
