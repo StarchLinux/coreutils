@@ -16,10 +16,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <ssl/ssl.h>
 #include <ctype.h>
 #include <err.h>
 #include <string.h>
+#include "bn.h"
 
 #include "extern.h"
 

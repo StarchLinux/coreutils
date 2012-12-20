@@ -17,7 +17,7 @@
  */
 
 #include <sys/types.h>
-#include <ssl/bn.h>
+#include "bn.h"
 
 
 struct number {
