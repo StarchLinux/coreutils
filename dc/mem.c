@@ -92,12 +92,12 @@ void
 bn_check(int x)						\
 {
 	if (x == 0)
-		err(1, "big number failure %lx", ERR_get_error());
+		err(1, "big number failure");
 }
 
 void
 bn_checkp(const void *p)						\
 {
 	if (p == NULL)
-		err(1, "allocation failure %lx", ERR_get_error());
+		err(1, "allocation failure");
 }
