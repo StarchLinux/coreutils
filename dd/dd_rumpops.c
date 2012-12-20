@@ -26,7 +26,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include <rump/rump_syscalls.h>
 #include <rump/rumpclient.h>
 
