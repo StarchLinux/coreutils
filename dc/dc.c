@@ -25,11 +25,11 @@
 
 #include "extern.h"
 
-static __dead void	usage(void);
+static void		usage(void);
 
 extern char		*__progname;
 
-static __dead void
+static void
 usage(void)
 {
 	(void)fprintf(stderr, "usage: %s [-x] [-e expression] [file]\n",

@@ -23,7 +23,7 @@
 #include <unistd.h>
 #include <err.h>
 
-__dead void usage(void);
+void usage(void);
 
 int
 main(int argc, char *argv[])
@@ -119,7 +119,7 @@ main(int argc, char *argv[])
 	exit(0);
 }
 
-__dead void
+void
 usage(void)
 {
 	extern char *__progname;

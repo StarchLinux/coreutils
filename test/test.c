@@ -208,7 +208,7 @@ main(argc, argv)
 	return res;
 }
 
-static __dead void
+static void
 syntax(op, msg)
 	char	*op;
 	char	*msg;
