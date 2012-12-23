@@ -34,6 +34,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/types.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
