@@ -37,7 +37,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
-#include <sys/mtio.h>
 #include <sys/time.h>
 
 #include <err.h>
@@ -114,52 +113,9 @@ pos_in(void)
 void
 pos_out(void)
 {
-	struct mtop t_op;
 	off_t cnt;
 	ssize_t n;
 
-	/*
-	 * If not a tape, try seeking on the file.  Seeking on a pipe is
-	 * going to fail, but don't protect the user -- they shouldn't
-	 * have specified the seek operand.
-	 */
-	if (!(out.flags & ISTAPE)) {
-		if (lseek(out.fd, out.offset * out.dbsz, SEEK_SET) == -1)
-			err(1, "%s", out.name);
-		return;
-	}
-
-	/* If no read access, try using mtio. */
-	if (out.flags & NOREAD) {
-		t_op.mt_op = MTFSR;
-		t_op.mt_count = out.offset;
-
-		if (ioctl(out.fd, MTIOCTOP, &t_op) < 0)
-			err(1, "%s", out.name);
-		return;
-	}
-
-	/* Read it. */
-	for (cnt = 0; cnt < out.offset; ++cnt) {
-		if ((n = read(out.fd, out.db, out.dbsz)) > 0)
-			continue;
-
-		if (n < 0)
-			err(1, "%s", out.name);
-
-		/*
-		 * If reach EOF, fill with NUL characters; first, back up over
-		 * the EOF mark.  Note, cnt has not yet been incremented, so
-		 * the EOF read does not count as a seek'd block.
-		 */
-		t_op.mt_op = MTBSR;
-		t_op.mt_count = 1;
-		if (ioctl(out.fd, MTIOCTOP, &t_op) == -1)
-			err(1, "%s", out.name);
-
-		while (cnt++ < out.offset)
-			if ((n = write(out.fd, out.db, out.dbsz)) != out.dbsz)
-				err(1, "%s", out.name);
-		break;
-	}
+	if (lseek(out.fd, out.offset * out.dbsz, SEEK_SET) == -1)
+		err(1, "%s", out.name);
 }

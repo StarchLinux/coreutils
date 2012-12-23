@@ -38,7 +38,6 @@
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
-#include <sys/mtio.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -198,13 +197,12 @@ setup(void)
 static void
 getfdtype(IO *io)
 {
-	struct mtget mt;
 	struct stat sb;
 
 	if (fstat(io->fd, &sb))
 		err(1, "%s", io->name);
 	if (S_ISCHR(sb.st_mode))
-		io->flags |= ioctl(io->fd, MTIOCGET, &mt) ? ISCHR : ISTAPE;
+		io->flags |= ISCHR;
 	else if (lseek(io->fd, (off_t)0, SEEK_CUR) == -1 && errno == ESPIPE)
 		io->flags |= ISPIPE;		/* XXX fixed in 4.4BSD */
 }
