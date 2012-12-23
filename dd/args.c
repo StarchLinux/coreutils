@@ -47,6 +47,8 @@
 #include "dd.h"
 #include "extern.h"
 
+#define SIZE_T_MAX ((size_t)(-1))
+
 static int	c_arg(const void *, const void *);
 static int	c_conv(const void *, const void *);
 static void	f_bs(char *);
@@ -166,8 +168,8 @@ jcl(char **argv)
 	if (cbsz > SSIZE_MAX || in.dbsz > SSIZE_MAX || out.dbsz > SSIZE_MAX)
 		errx(1, "buffer sizes cannot be greater than %zd",
 		    (ssize_t)SSIZE_MAX);
-	if (in.offset > QUAD_MAX / in.dbsz || out.offset > QUAD_MAX / out.dbsz)
-		errx(1, "seek offsets cannot be larger than %qd", QUAD_MAX);
+	if (in.offset > LLONG_MAX / in.dbsz || out.offset > LLONG_MAX / out.dbsz)
+		errx(1, "seek offsets cannot be larger than %qd", LLONG_MAX);
 }
 
 static int
@@ -399,7 +401,7 @@ get_off(char *val)
 	char *expr;
 
 	num = strtoq(val, &expr, 0);
-	if (num == QUAD_MAX)			/* Overflow. */
+	if (num == LLONG_MAX)			/* Overflow. */
 		err(1, "%s", oper);
 	if (expr == val)			/* No digits. */
 		errx(1, "%s: illegal numeric value", oper);
