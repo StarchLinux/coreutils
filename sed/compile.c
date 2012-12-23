@@ -265,9 +265,7 @@ nonsel:		/* Now parse the command */
 			cmd->t = duptoeol(p, "w command", NULL);
 			if (aflag)
 				cmd->u.fd = -1;
-			else if ((cmd->u.fd = open(p,
-			    O_WRONLY|O_APPEND|O_CREAT|O_TRUNC,
-			    DEFFILEMODE)) == -1)
+			else if ((cmd->u.fd = open(p, O_WRONLY|O_APPEND|O_CREAT|O_TRUNC)) == -1)
 				err(FATAL, "%s: %s", p, strerror(errno));
 			break;
 		case RFILE:			/* r */
@@ -592,9 +590,7 @@ compile_flags(char *p, struct s_subst *s)
 			if (q == wfile)
 				err(COMPILE, "no wfile specified");
 			s->wfile = strdup(wfile);
-			if (!aflag && (s->wfd = open(wfile,
-			    O_WRONLY|O_APPEND|O_CREAT|O_TRUNC,
-			    DEFFILEMODE)) == -1)
+			if (!aflag && (s->wfd = open(wfile, O_WRONLY|O_APPEND|O_CREAT|O_TRUNC)) == -1)
 				err(FATAL, "%s: %s", wfile, strerror(errno));
 			return (p);
 		default:

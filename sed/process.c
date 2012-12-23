@@ -217,9 +217,7 @@ redirect:
 			case 'w':
 				if (pd)
 					break;
-				if (cp->u.fd == -1 && (cp->u.fd = open(cp->t,
-				    O_WRONLY|O_APPEND|O_CREAT|O_TRUNC,
-				    DEFFILEMODE)) == -1)
+				if (cp->u.fd == -1 && (cp->u.fd = open(cp->t, O_WRONLY|O_APPEND|O_CREAT|O_TRUNC)) == -1)
 					err(FATAL, "%s: %s",
 					    cp->t, strerror(errno));
 				if (write(cp->u.fd, ps, psl) != psl)
@@ -399,7 +397,7 @@ substitute(struct s_command *cp)
 	/* Handle the 'w' flag. */
 	if (cp->u.s->wfile && !pd) {
 		if (cp->u.s->wfd == -1 && (cp->u.s->wfd = open(cp->u.s->wfile,
-		    O_WRONLY|O_APPEND|O_CREAT|O_TRUNC, DEFFILEMODE)) == -1)
+		    O_WRONLY|O_APPEND|O_CREAT|O_TRUNC)) == -1)
 			err(FATAL, "%s: %s", cp->u.s->wfile, strerror(errno));
 		if (write(cp->u.s->wfd, ps, psl) != psl)
 			err(FATAL, "%s: %s", cp->u.s->wfile, strerror(errno));
