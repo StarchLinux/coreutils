@@ -54,6 +54,8 @@
 
 #include "pathnames.h"
 
+#define REG_BASIC 0
+
 static void	parse_input(int, char *[]);
 static void	prerun(int, char *[]);
 static int	prompt(void);
