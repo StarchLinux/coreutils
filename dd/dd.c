@@ -97,7 +97,7 @@ setup(void)
 		in.name = "stdin";
 		in.fd = STDIN_FILENO;
 	} else {
-		in.fd = open(in.name, O_RDONLY, 0);
+		in.fd = open(in.name, O_RDONLY);
 		if (in.fd < 0)
 			err(1, "%s", in.name);
 	}
@@ -114,14 +114,14 @@ setup(void)
 	} else {
 #define	OFLAGS \
     (O_CREAT | (ddflags & (C_SEEK | C_NOTRUNC) ? 0 : O_TRUNC))
-		out.fd = open(out.name, O_RDWR | OFLAGS, DEFFILEMODE);
+		out.fd = open(out.name, O_RDWR | OFLAGS);
 		/*
 		 * May not have read access, so try again with write only.
 		 * Without read we may have a problem if output also does
 		 * not support seeks.
 		 */
 		if (out.fd < 0) {
-			out.fd = open(out.name, O_WRONLY | OFLAGS, DEFFILEMODE);
+			out.fd = open(out.name, O_WRONLY | OFLAGS);
 			out.flags |= NOREAD;
 		}
 		if (out.fd < 0)
