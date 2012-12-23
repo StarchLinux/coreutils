@@ -400,7 +400,7 @@ get_off(char *val)
 	off_t num, t;
 	char *expr;
 
-	num = strtoq(val, &expr, 0);
+	num = strtoll(val, &expr, 0);
 	if (num == LLONG_MAX)			/* Overflow. */
 		err(1, "%s", oper);
 	if (expr == val)			/* No digits. */
