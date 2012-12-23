@@ -492,6 +492,7 @@ regexec_e(regex_t *preg, const char *string, int eflags,
     int nomatch, size_t slen)
 {
 	int eval;
+	char *x;
 	
 	if (preg == NULL) {
 		if (defpreg == NULL)
@@ -502,11 +503,11 @@ regexec_e(regex_t *preg, const char *string, int eflags,
 	/* Set anchors, discounting trailing newline (if any). */
 	if (slen > 0 && string[slen - 1] == '\n')
 		slen--;
-	match[0].rm_so = 0;
-	match[0].rm_eo = slen;
-	
-	eval = regexec(defpreg, string,
-	    nomatch ? 0 : maxnsub + 1, match, eflags | REG_STARTEND);
+	x = strndup (string, slen);
+	if (!x) err (FATAL, "%s", strerror (errno));
+	eval = regexec(defpreg, x,
+	    nomatch ? 0 : maxnsub + 1, match, eflags);
+	free (x);
 	switch (eval) {
 	case 0:
 		return (1);
