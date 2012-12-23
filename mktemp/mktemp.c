@@ -23,6 +23,8 @@
 #include <unistd.h>
 #include <err.h>
 
+char *__progname;
+
 void usage(void);
 
 int
@@ -31,6 +33,8 @@ main(int argc, char *argv[])
 	int ch, fd, uflag = 0, quiet = 0, tflag = 0, makedir = 0;
 	char *cp, *template, *tempfile, *prefix = _PATH_TMP;
 	int plen;
+	
+        __progname = argv[0];
 
 	while ((ch = getopt(argc, argv, "dp:qtu")) != -1)
 		switch(ch) {
