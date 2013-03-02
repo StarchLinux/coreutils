@@ -1,392 +1,673 @@
-/*	$OpenBSD: dd.c,v 1.16 2009/10/27 23:59:21 deraadt Exp $	*/
-/*	$NetBSD: dd.c,v 1.6 1996/02/20 19:29:06 jtc Exp $	*/
+#include <u.h>
+#include <libc.h>
 
-/*-
- * Copyright (c) 1991, 1993, 1994
- *	The Regents of the University of California.  All rights reserved.
- *
- * This code is derived from software contributed to Berkeley by
- * Keith Muller of the University of California, San Diego and Lance
- * Visser of Convex Computer Corporation.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of the University nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- */
+#define	BIG	((1UL<<31)-1)
+#define VBIG	((1ULL<<63)-1)
+#define	LCASE	(1<<0)
+#define	UCASE	(1<<1)
+#define	SWAB	(1<<2)
+#define NERR	(1<<3)
+#define SYNC	(1<<4)
 
-#include <sys/types.h>
-#include <sys/param.h>
-#include <sys/stat.h>
-#include <sys/ioctl.h>
+int	cflag;
+int	fflag;
 
-#include <ctype.h>
-#include <err.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+char	*string;
+char	*ifile;
+char	*ofile;
+char	*ibuf;
+char	*obuf;
 
-#include "dd.h"
-#include "extern.h"
+vlong	skip;
+vlong	oseekn;
+vlong	iseekn;
+vlong	count;
 
-static void dd_close(void);
-static void dd_in(void);
-static void getfdtype(IO *);
-static void setup(void);
+long	files	= 1;
+long	ibs	= 512;
+long	obs	= 512;
+long	bs;
+long	cbs;
+long	ibc;
+long	obc;
+long	cbc;
+long	nifr;
+long	nipr;
+long	nofr;
+long	nopr;
+long	ntrunc;
 
-IO	in, out;		/* input/output state */
-STAT	st;			/* statistics */
-void	(*cfunc)(void);		/* conversion function */
-size_t	cpy_cnt;		/* # of blocks to copy */
-u_int	ddflags;		/* conversion options */
-size_t	cbsz;			/* conversion block size */
-size_t	files_cnt = 1;		/* # of files to copy */
-const	u_char	*ctab;		/* conversion table */
+int dotrunc = 1;
+int	ibf;
+int	obf;
+
+char	*op;
+int	nspace;
+
+uchar	etoa[256];
+uchar	atoe[256];
+uchar	atoibm[256];
+
+int	quiet;
+
+void	flsh(void);
+int	match(char *s);
+vlong	number(vlong big);
+void	cnull(int cc);
+void	null(int c);
+void	ascii(int cc);
+void	unblock(int cc);
+void	ebcdic(int cc);
+void	ibm(int cc);
+void	block(int cc);
+void	term(char*);
+void	stats(void);
+
+#define	iskey(s)	((key[0] == '-') && (strcmp(key+1, s) == 0))
 
 int
 main(int argc, char *argv[])
 {
-	jcl(argv);
-	setup();
+	void (*conv)(int);
+	char *ip;
+	char *key;
+	int a, c;
 
-	(void)signal(SIGUSR1, summaryx);
-	(void)signal(SIGINT, terminate);
-
-	atexit(summary);
-
-	if (cpy_cnt != (size_t)-1) {
-		while (files_cnt--)
-			dd_in();
-	}
-
-	dd_close();
-	exit(0);
-}
-
-static void
-setup(void)
-{
-#ifndef NO_CONV
-	u_int cnt;
-#endif
-
-	if (in.name == NULL) {
-		in.name = "stdin";
-		in.fd = STDIN_FILENO;
-	} else {
-		in.fd = open(in.name, O_RDONLY);
-		if (in.fd < 0)
-			err(1, "%s", in.name);
-	}
-
-	getfdtype(&in);
-
-	if (files_cnt > 1 && !(in.flags & ISTAPE))
-		errx(1, "files is not supported for non-tape devices");
-
-	if (out.name == NULL) {
-		/* No way to check for read access here. */
-		out.fd = STDOUT_FILENO;
-		out.name = "stdout";
-	} else {
-#define	OFLAGS \
-    (O_CREAT | (ddflags & (C_SEEK | C_NOTRUNC) ? 0 : O_TRUNC))
-		out.fd = open(out.name, O_RDWR | OFLAGS);
-		/*
-		 * May not have read access, so try again with write only.
-		 * Without read we may have a problem if output also does
-		 * not support seeks.
-		 */
-		if (out.fd < 0) {
-			out.fd = open(out.name, O_WRONLY | OFLAGS);
-			out.flags |= NOREAD;
+	conv = null;
+	for(c=1; c<argc; c++) {
+		key = argv[c++];
+		if(c >= argc){
+			fprint(2, "dd: arg %s needs a value\n", key);
+			exits("arg");
 		}
-		if (out.fd < 0)
-			err(1, "%s", out.name);
-	}
-
-	getfdtype(&out);
-
-	/*
-	 * Allocate space for the input and output buffers.  If not doing
-	 * record oriented I/O, only need a single buffer.
-	 */
-	if (!(ddflags & (C_BLOCK|C_UNBLOCK))) {
-		if ((in.db = malloc(out.dbsz + in.dbsz - 1)) == NULL)
-			err(1, "input buffer");
-		out.db = in.db;
-	} else if ((in.db =
-	    malloc((u_int)(MAX(in.dbsz, cbsz) + cbsz))) == NULL ||
-	    (out.db = malloc((u_int)(out.dbsz + cbsz))) == NULL)
-		err(1, "output buffer");
-	in.dbp = in.db;
-	out.dbp = out.db;
-
-	/* Position the input/output streams. */
-	if (in.offset)
-		pos_in();
-	if (out.offset)
-		pos_out();
-
-	/*
-	 * Truncate the output file; ignore errors because it fails on some
-	 * kinds of output files, tapes, for example.
-	 */
-	if ((ddflags & (C_OF | C_SEEK | C_NOTRUNC)) == (C_OF | C_SEEK))
-		(void)ftruncate(out.fd, out.offset * out.dbsz);
-
-	/*
-	 * If converting case at the same time as another conversion, build a
-	 * table that does both at once.  If just converting case, use the
-	 * built-in tables.
-	 */
-	if (ddflags & (C_LCASE|C_UCASE)) {
-#ifdef	NO_CONV
-		/* Should not get here, but just in case... */
-		errx(1, "case conv and -DNO_CONV");
-#else	/* NO_CONV */
-		if (ddflags & C_ASCII || ddflags & C_EBCDIC) {
-			if (ddflags & C_LCASE) {
-				for (cnt = 0; cnt < 0377; ++cnt)
-					casetab[cnt] = tolower(ctab[cnt]);
-			} else {
-				for (cnt = 0; cnt < 0377; ++cnt)
-					casetab[cnt] = toupper(ctab[cnt]);
-			}
-		} else {
-			if (ddflags & C_LCASE) {
-				for (cnt = 0; cnt < 0377; ++cnt)
-					casetab[cnt] = tolower(cnt);
-			} else {
-				for (cnt = 0; cnt < 0377; ++cnt)
-					casetab[cnt] = toupper(cnt);
-			}
-		}
-
-		ctab = casetab;
-#endif	/* NO_CONV */
-	}
-
-	/* Statistics timestamp. */
-	(void)gettimeofday(&st.startv, (struct timezone *)NULL);
-}
-
-static void
-getfdtype(IO *io)
-{
-	struct stat sb;
-
-	if (fstat(io->fd, &sb))
-		err(1, "%s", io->name);
-	if (S_ISCHR(sb.st_mode))
-		io->flags |= ISCHR;
-	else if (lseek(io->fd, (off_t)0, SEEK_CUR) == -1 && errno == ESPIPE)
-		io->flags |= ISPIPE;		/* XXX fixed in 4.4BSD */
-}
-
-static void
-dd_in(void)
-{
-	ssize_t n;
-
-	for (;;) {
-		if (cpy_cnt && (st.in_full + st.in_part) >= cpy_cnt)
-			return;
-
-		/*
-		 * Zero the buffer first if sync; if doing block operations
-		 * use spaces.
-		 */
-		if (ddflags & C_SYNC) {
-			if (ddflags & (C_BLOCK|C_UNBLOCK))
-				(void)memset(in.dbp, ' ', in.dbsz);
-			else
-				(void)memset(in.dbp, 0, in.dbsz);
-		}
-
-		n = read(in.fd, in.dbp, in.dbsz);
-		if (n == 0) {
-			in.dbrcnt = 0;
-			return;
-		}
-
-		/* Read error. */
-		if (n < 0) {
-			/*
-			 * If noerror not specified, die.  POSIX requires that
-			 * the warning message be followed by an I/O display.
-			 */
-			if (!(ddflags & C_NOERROR))
-				err(1, "%s", in.name);
-			warn("%s", in.name);
-			summary();
-
-			/*
-			 * If it's not a tape drive or a pipe, seek past the
-			 * error.  If your OS doesn't do the right thing for
-			 * raw disks this section should be modified to re-read
-			 * in sector size chunks.
-			 */
-			if (!(in.flags & (ISPIPE|ISTAPE)) &&
-			    lseek(in.fd, (off_t)in.dbsz, SEEK_CUR))
-				warn("%s", in.name);
-
-			/* If sync not specified, omit block and continue. */
-			if (!(ddflags & C_SYNC))
-				continue;
-
-			/* Read errors count as full blocks. */
-			in.dbcnt += in.dbrcnt = in.dbsz;
-			++st.in_full;
-
-		/* Handle full input blocks. */
-		} else if (n == in.dbsz) {
-			in.dbcnt += in.dbrcnt = n;
-			++st.in_full;
-
-		/* Handle partial input blocks. */
-		} else {
-			/* If sync, use the entire block. */
-			if (ddflags & C_SYNC)
-				in.dbcnt += in.dbrcnt = in.dbsz;
-			else
-				in.dbcnt += in.dbrcnt = n;
-			++st.in_part;
-		}
-
-		/*
-		 * POSIX states that if bs is set and no other conversions
-		 * than noerror, notrunc or sync are specified, the block
-		 * is output without buffering as it is read.
-		 */
-		if (ddflags & C_BS) {
-			out.dbcnt = in.dbcnt;
-			dd_out(1);
-			in.dbcnt = 0;
+		string = argv[c];
+		if(iskey("ibs")) {
+			ibs = number(BIG);
 			continue;
 		}
-
-		if (ddflags & C_SWAB) {
-			if ((n = in.dbcnt) & 1) {
-				++st.swab;
-				--n;
-			}
-			swab(in.dbp, in.dbp, n);
+		if(iskey("obs")) {
+			obs = number(BIG);
+			continue;
 		}
-
-		in.dbp += in.dbrcnt;
-		(*cfunc)();
+		if(iskey("cbs")) {
+			cbs = number(BIG);
+			continue;
+		}
+		if(iskey("bs")) {
+			bs = number(BIG);
+			continue;
+		}
+		if(iskey("if")) {
+			ifile = string;
+			continue;
+		}
+		if(iskey("of")) {
+			ofile = string;
+			continue;
+		}
+		if(iskey("trunc")) {
+			dotrunc = number(BIG);
+			continue;
+		}
+		if(iskey("quiet")) {
+			quiet = number(BIG);
+			continue;
+		}
+		if(iskey("skip")) {
+			skip = number(VBIG);
+			continue;
+		}
+		if(iskey("seek") || iskey("oseek")) {
+			oseekn = number(VBIG);
+			continue;
+		}
+		if(iskey("iseek")) {
+			iseekn = number(VBIG);
+			continue;
+		}
+		if(iskey("count")) {
+			count = number(VBIG);
+			continue;
+		}
+		if(iskey("files")) {
+			files = number(BIG);
+			continue;
+		}
+		if(iskey("conv")) {
+		cloop:
+			if(match(","))
+				goto cloop;
+			if(*string == '\0')
+				continue;
+			if(match("ebcdic")) {
+				conv = ebcdic;
+				goto cloop;
+			}
+			if(match("ibm")) {
+				conv = ibm;
+				goto cloop;
+			}
+			if(match("ascii")) {
+				conv = ascii;
+				goto cloop;
+			}
+			if(match("block")) {
+				conv = block;
+				goto cloop;
+			}
+			if(match("unblock")) {
+				conv = unblock;
+				goto cloop;
+			}
+			if(match("lcase")) {
+				cflag |= LCASE;
+				goto cloop;
+			}
+			if(match("ucase")) {
+				cflag |= UCASE;
+				goto cloop;
+			}
+			if(match("swab")) {
+				cflag |= SWAB;
+				goto cloop;
+			}
+			if(match("noerror")) {
+				cflag |= NERR;
+				goto cloop;
+			}
+			if(match("sync")) {
+				cflag |= SYNC;
+				goto cloop;
+			}
+			fprint(2, "dd: bad conv %s\n", argv[c]);
+			exits("arg");
+		}
+		fprint(2, "dd: bad arg: %s\n", key);
+		exits("arg");
 	}
-}
+	if(conv == null && cflag&(LCASE|UCASE))
+		conv = cnull;
+	if(ifile)
+		ibf = open(ifile, 0);
+	else
+		ibf = dup(0, -1);
+	if(ibf < 0) {
+		fprint(2, "dd: open %s: %r\n", ifile);
+		exits("open");
+	}
+	if(ofile){
+		if(dotrunc)
+			obf = create(ofile, 1, 0664);
+		else
+			obf = open(ofile, 1);
+		if(obf < 0) {
+			fprint(2, "dd: create %s: %r\n", ofile);
+			exits("create");
+		}
+	}else{
+		obf = dup(1, -1);
+		if(obf < 0) {
+			fprint(2, "dd: can't dup file descriptor: %s: %r\n", ofile);
+			exits("dup");
+		}
+	}
+	if(bs)
+		ibs = obs = bs;
+	if(ibs == obs && conv == null)
+		fflag++;
+	if(ibs == 0 || obs == 0) {
+		fprint(2, "dd: counts: cannot be zero\n");
+		exits("counts");
+	}
+	ibuf = sbrk(ibs);
+	if(fflag)
+		obuf = ibuf;
+	else
+		obuf = sbrk(obs);
+	sbrk(64);	/* For good measure */
+	if(ibuf == (char *)-1 || obuf == (char *)-1) {
+		fprint(2, "dd: not enough memory: %r\n");
+		exits("memory");
+	}
+	ibc = 0;
+	obc = 0;
+	cbc = 0;
+	op = obuf;
 
 /*
- * Cleanup any remaining I/O and flush output.  If necessary, output file
- * is truncated.
- */
-static void
-dd_close(void)
-{
-	if (cfunc == def)
-		def_close();
-	else if (cfunc == block)
-		block_close();
-	else if (cfunc == unblock)
-		unblock_close();
-	if (ddflags & C_OSYNC && out.dbcnt && out.dbcnt < out.dbsz) {
-		if (ddflags & (C_BLOCK|C_UNBLOCK))
-			memset(out.dbp, ' ', out.dbsz - out.dbcnt);
-		else
-			memset(out.dbp, 0, out.dbsz - out.dbcnt);
-		out.dbcnt = out.dbsz;
+	if(signal(SIGINT, SIG_IGN) != SIG_IGN)
+		signal(SIGINT, term);
+*/
+	seek(obf, obs*oseekn, 1);
+	seek(ibf, ibs*iseekn, 1);
+	while(skip) {
+		read(ibf, ibuf, ibs);
+		skip--;
 	}
-	if (out.dbcnt)
-		dd_out(1);
+
+	ip = 0;
+loop:
+	if(ibc-- == 0) {
+		ibc = 0;
+		if(count==0 || nifr+nipr!=count) {
+			if(cflag&(NERR|SYNC))
+			for(ip=ibuf+ibs; ip>ibuf;)
+				*--ip = 0;
+			ibc = read(ibf, ibuf, ibs);
+		}
+		if(ibc == -1) {
+			perror("read");
+			if((cflag&NERR) == 0) {
+				flsh();
+				term("errors");
+			}
+			ibc = 0;
+			for(c=0; c<ibs; c++)
+				if(ibuf[c] != 0)
+					ibc = c+1;
+			seek(ibf, ibs, 1);
+			stats();
+		}else if(ibc == 0 && --files<=0) {
+			flsh();
+			term(nil);
+		}
+		if(ibc != ibs) {
+			nipr++;
+			if(cflag&SYNC)
+				ibc = ibs;
+		} else
+			nifr++;
+		ip = ibuf;
+		c = (ibc>>1) & ~1;
+		if(cflag&SWAB && c)
+		do {
+			a = *ip++;
+			ip[-1] = *ip;
+			*ip++ = a;
+		} while(--c);
+		ip = ibuf;
+		if(fflag) {
+			obc = ibc;
+			flsh();
+			ibc = 0;
+		}
+		goto loop;
+	}
+	c = 0;
+	c |= *ip++;
+	c &= 0377;
+	(*conv)(c);
+	goto loop;
 }
 
 void
-dd_out(int force)
+flsh(void)
 {
-	static int warned;
-	size_t cnt, n;
-	ssize_t nw;
-	u_char *outp;
+	int c;
 
-	/*
-	 * Write one or more blocks out.  The common case is writing a full
-	 * output block in a single write; increment the full block stats.
-	 * Otherwise, we're into partial block writes.  If a partial write,
-	 * and it's a character device, just warn.  If a tape device, quit.
-	 *
-	 * The partial writes represent two cases.  1: Where the input block
-	 * was less than expected so the output block was less than expected.
-	 * 2: Where the input block was the right size but we were forced to
-	 * write the block in multiple chunks.  The original versions of dd(1)
-	 * never wrote a block in more than a single write, so the latter case
-	 * never happened.
-	 *
-	 * One special case is if we're forced to do the write -- in that case
-	 * we play games with the buffer size, and it's usually a partial write.
-	 */
-	outp = out.db;
-	for (n = force ? out.dbcnt : out.dbsz;; n = out.dbsz) {
-		for (cnt = n;; cnt -= nw) {
-			nw = write(out.fd, outp, cnt);
-			if (nw <= 0) {
-				if (nw == 0)
-					errx(1, "%s: end of device", out.name);
-				if (errno != EINTR)
-					err(1, "%s", out.name);
-				nw = 0;
-			}
-			outp += nw;
-			st.bytes += nw;
-			if (nw == n) {
-				if (n != out.dbsz)
-					++st.out_part;
-				else
-					++st.out_full;
-				break;
-			}
-			++st.out_part;
-			if (nw == cnt)
-				break;
-			if (out.flags & ISCHR && !warned) {
-				warned = 1;
-				warnx("%s: short write on character device",
-				    out.name);
-			}
-			if (out.flags & ISTAPE)
-				errx(1, "%s: short write on tape device", out.name);
+	if(obc) {
+		/* don't perror dregs of previous errors on a short write */
+		werrstr("");
+		c = write(obf, obuf, obc);
+		if(c != obc) {
+			if(c > 0)
+				++nopr;
+			perror("write");
+			term("errors");
 		}
-		if ((out.dbcnt -= n) < out.dbsz)
-			break;
+		if(obc == obs)
+			nofr++;
+		else
+			nopr++;
+		obc = 0;
 	}
-
-	/* Reassemble the output block. */
-	if (out.dbcnt)
-		(void)memmove(out.db, out.dbp - out.dbcnt, out.dbcnt);
-	out.dbp = out.db + out.dbcnt;
 }
+
+int
+match(char *s)
+{
+	char *cs;
+
+	cs = string;
+	while(*cs++ == *s)
+		if(*s++ == '\0')
+			goto true;
+	if(*s != '\0')
+		return 0;
+
+true:
+	cs--;
+	string = cs;
+	return 1;
+}
+
+vlong
+number(vlong big)
+{
+	char *cs;
+	uvlong n;
+
+	cs = string;
+	n = 0;
+	while(*cs >= '0' && *cs <= '9')
+		n = n*10 + *cs++ - '0';
+	for(;;)
+	switch(*cs++) {
+
+	case 'k':
+		n *= 1024;
+		continue;
+
+	case 'b':
+		n *= 512;
+		continue;
+
+/*	case '*':*/
+	case 'x':
+		string = cs;
+		n *= number(VBIG);
+
+	case '\0':
+		if(n > big) {
+			fprint(2, "dd: argument %llud out of range\n", n);
+			exits("range");
+		}
+		return n;
+	}
+	/* never gets here */
+}
+
+void
+cnull(int cc)
+{
+	int c;
+
+	c = cc;
+	if((cflag&UCASE) && c>='a' && c<='z')
+		c += 'A'-'a';
+	if((cflag&LCASE) && c>='A' && c<='Z')
+		c += 'a'-'A';
+	null(c);
+}
+
+void
+null(int c)
+{
+
+	*op = c;
+	op++;
+	if(++obc >= obs) {
+		flsh();
+		op = obuf;
+	}
+}
+
+void
+ascii(int cc)
+{
+	int c;
+
+	c = etoa[cc];
+	if(cbs == 0) {
+		cnull(c);
+		return;
+	}
+	if(c == ' ') {
+		nspace++;
+		goto out;
+	}
+	while(nspace > 0) {
+		null(' ');
+		nspace--;
+	}
+	cnull(c);
+
+out:
+	if(++cbc >= cbs) {
+		null('\n');
+		cbc = 0;
+		nspace = 0;
+	}
+}
+
+void
+unblock(int cc)
+{
+	int c;
+
+	c = cc & 0377;
+	if(cbs == 0) {
+		cnull(c);
+		return;
+	}
+	if(c == ' ') {
+		nspace++;
+		goto out;
+	}
+	while(nspace > 0) {
+		null(' ');
+		nspace--;
+	}
+	cnull(c);
+
+out:
+	if(++cbc >= cbs) {
+		null('\n');
+		cbc = 0;
+		nspace = 0;
+	}
+}
+
+void
+ebcdic(int cc)
+{
+	int c;
+
+	c = cc;
+	if(cflag&UCASE && c>='a' && c<='z')
+		c += 'A'-'a';
+	if(cflag&LCASE && c>='A' && c<='Z')
+		c += 'a'-'A';
+	c = atoe[c];
+	if(cbs == 0) {
+		null(c);
+		return;
+	}
+	if(cc == '\n') {
+		while(cbc < cbs) {
+			null(atoe[' ']);
+			cbc++;
+		}
+		cbc = 0;
+		return;
+	}
+	if(cbc == cbs)
+		ntrunc++;
+	cbc++;
+	if(cbc <= cbs)
+		null(c);
+}
+
+void
+ibm(int cc)
+{
+	int c;
+
+	c = cc;
+	if(cflag&UCASE && c>='a' && c<='z')
+		c += 'A'-'a';
+	if(cflag&LCASE && c>='A' && c<='Z')
+		c += 'a'-'A';
+	c = atoibm[c] & 0377;
+	if(cbs == 0) {
+		null(c);
+		return;
+	}
+	if(cc == '\n') {
+		while(cbc < cbs) {
+			null(atoibm[' ']);
+			cbc++;
+		}
+		cbc = 0;
+		return;
+	}
+	if(cbc == cbs)
+		ntrunc++;
+	cbc++;
+	if(cbc <= cbs)
+		null(c);
+}
+
+void
+block(int cc)
+{
+	int c;
+
+	c = cc;
+	if(cflag&UCASE && c>='a' && c<='z')
+		c += 'A'-'a';
+	if(cflag&LCASE && c>='A' && c<='Z')
+		c += 'a'-'A';
+	c &= 0377;
+	if(cbs == 0) {
+		null(c);
+		return;
+	}
+	if(cc == '\n') {
+		while(cbc < cbs) {
+			null(' ');
+			cbc++;
+		}
+		cbc = 0;
+		return;
+	}
+	if(cbc == cbs)
+		ntrunc++;
+	cbc++;
+	if(cbc <= cbs)
+		null(c);
+}
+
+void
+term(char *status)
+{
+	stats();
+	exits(status);
+}
+
+void
+stats(void)
+{
+	if(quiet)
+		return;
+	fprint(2, "%lud+%lud records in\n", nifr, nipr);
+	fprint(2, "%lud+%lud records out\n", nofr, nopr);
+	if(ntrunc)
+		fprint(2, "%lud truncated records\n", ntrunc);
+}
+
+uchar	etoa[] =
+{
+	0000,0001,0002,0003,0234,0011,0206,0177,
+	0227,0215,0216,0013,0014,0015,0016,0017,
+	0020,0021,0022,0023,0235,0205,0010,0207,
+	0030,0031,0222,0217,0034,0035,0036,0037,
+	0200,0201,0202,0203,0204,0012,0027,0033,
+	0210,0211,0212,0213,0214,0005,0006,0007,
+	0220,0221,0026,0223,0224,0225,0226,0004,
+	0230,0231,0232,0233,0024,0025,0236,0032,
+	0040,0240,0241,0242,0243,0244,0245,0246,
+	0247,0250,0133,0056,0074,0050,0053,0041,
+	0046,0251,0252,0253,0254,0255,0256,0257,
+	0260,0261,0135,0044,0052,0051,0073,0136,
+	0055,0057,0262,0263,0264,0265,0266,0267,
+	0270,0271,0174,0054,0045,0137,0076,0077,
+	0272,0273,0274,0275,0276,0277,0300,0301,
+	0302,0140,0072,0043,0100,0047,0075,0042,
+	0303,0141,0142,0143,0144,0145,0146,0147,
+	0150,0151,0304,0305,0306,0307,0310,0311,
+	0312,0152,0153,0154,0155,0156,0157,0160,
+	0161,0162,0313,0314,0315,0316,0317,0320,
+	0321,0176,0163,0164,0165,0166,0167,0170,
+	0171,0172,0322,0323,0324,0325,0326,0327,
+	0330,0331,0332,0333,0334,0335,0336,0337,
+	0340,0341,0342,0343,0344,0345,0346,0347,
+	0173,0101,0102,0103,0104,0105,0106,0107,
+	0110,0111,0350,0351,0352,0353,0354,0355,
+	0175,0112,0113,0114,0115,0116,0117,0120,
+	0121,0122,0356,0357,0360,0361,0362,0363,
+	0134,0237,0123,0124,0125,0126,0127,0130,
+	0131,0132,0364,0365,0366,0367,0370,0371,
+	0060,0061,0062,0063,0064,0065,0066,0067,
+	0070,0071,0372,0373,0374,0375,0376,0377,
+};
+uchar	atoe[] =
+{
+	0000,0001,0002,0003,0067,0055,0056,0057,
+	0026,0005,0045,0013,0014,0015,0016,0017,
+	0020,0021,0022,0023,0074,0075,0062,0046,
+	0030,0031,0077,0047,0034,0035,0036,0037,
+	0100,0117,0177,0173,0133,0154,0120,0175,
+	0115,0135,0134,0116,0153,0140,0113,0141,
+	0360,0361,0362,0363,0364,0365,0366,0367,
+	0370,0371,0172,0136,0114,0176,0156,0157,
+	0174,0301,0302,0303,0304,0305,0306,0307,
+	0310,0311,0321,0322,0323,0324,0325,0326,
+	0327,0330,0331,0342,0343,0344,0345,0346,
+	0347,0350,0351,0112,0340,0132,0137,0155,
+	0171,0201,0202,0203,0204,0205,0206,0207,
+	0210,0211,0221,0222,0223,0224,0225,0226,
+	0227,0230,0231,0242,0243,0244,0245,0246,
+	0247,0250,0251,0300,0152,0320,0241,0007,
+	0040,0041,0042,0043,0044,0025,0006,0027,
+	0050,0051,0052,0053,0054,0011,0012,0033,
+	0060,0061,0032,0063,0064,0065,0066,0010,
+	0070,0071,0072,0073,0004,0024,0076,0341,
+	0101,0102,0103,0104,0105,0106,0107,0110,
+	0111,0121,0122,0123,0124,0125,0126,0127,
+	0130,0131,0142,0143,0144,0145,0146,0147,
+	0150,0151,0160,0161,0162,0163,0164,0165,
+	0166,0167,0170,0200,0212,0213,0214,0215,
+	0216,0217,0220,0232,0233,0234,0235,0236,
+	0237,0240,0252,0253,0254,0255,0256,0257,
+	0260,0261,0262,0263,0264,0265,0266,0267,
+	0270,0271,0272,0273,0274,0275,0276,0277,
+	0312,0313,0314,0315,0316,0317,0332,0333,
+	0334,0335,0336,0337,0352,0353,0354,0355,
+	0356,0357,0372,0373,0374,0375,0376,0377,
+};
+uchar	atoibm[] =
+{
+	0000,0001,0002,0003,0067,0055,0056,0057,
+	0026,0005,0045,0013,0014,0015,0016,0017,
+	0020,0021,0022,0023,0074,0075,0062,0046,
+	0030,0031,0077,0047,0034,0035,0036,0037,
+	0100,0132,0177,0173,0133,0154,0120,0175,
+	0115,0135,0134,0116,0153,0140,0113,0141,
+	0360,0361,0362,0363,0364,0365,0366,0367,
+	0370,0371,0172,0136,0114,0176,0156,0157,
+	0174,0301,0302,0303,0304,0305,0306,0307,
+	0310,0311,0321,0322,0323,0324,0325,0326,
+	0327,0330,0331,0342,0343,0344,0345,0346,
+	0347,0350,0351,0255,0340,0275,0137,0155,
+	0171,0201,0202,0203,0204,0205,0206,0207,
+	0210,0211,0221,0222,0223,0224,0225,0226,
+	0227,0230,0231,0242,0243,0244,0245,0246,
+	0247,0250,0251,0300,0117,0320,0241,0007,
+	0040,0041,0042,0043,0044,0025,0006,0027,
+	0050,0051,0052,0053,0054,0011,0012,0033,
+	0060,0061,0032,0063,0064,0065,0066,0010,
+	0070,0071,0072,0073,0004,0024,0076,0341,
+	0101,0102,0103,0104,0105,0106,0107,0110,
+	0111,0121,0122,0123,0124,0125,0126,0127,
+	0130,0131,0142,0143,0144,0145,0146,0147,
+	0150,0151,0160,0161,0162,0163,0164,0165,
+	0166,0167,0170,0200,0212,0213,0214,0215,
+	0216,0217,0220,0232,0233,0234,0235,0236,
+	0237,0240,0252,0253,0254,0255,0256,0257,
+	0260,0261,0262,0263,0264,0265,0266,0267,
+	0270,0271,0272,0273,0274,0275,0276,0277,
+	0312,0313,0314,0315,0316,0317,0332,0333,
+	0334,0335,0336,0337,0352,0353,0354,0355,
+	0356,0357,0372,0373,0374,0375,0376,0377,
+};
