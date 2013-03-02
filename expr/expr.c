@@ -1,517 +1,378 @@
-/*	$OpenBSD: expr.c,v 1.17 2006/06/21 18:28:24 deraadt Exp $	*/
-/*	$NetBSD: expr.c,v 1.3.6.1 1996/06/04 20:41:47 cgd Exp $	*/
-
 /*
- * Written by J.T. Conklin <jtc@netbsd.org>.
- * Public domain.
+ *
+ *	debugger
+ *
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <locale.h>
-#include <ctype.h>
-#include <regex.h>
-#include <err.h>
+#include "defs.h"
+#include "fns.h"
 
-struct val	*make_int(int);
-struct val	*make_str(char *);
-void		 free_value(struct val *);
-int		 is_integer(struct val *, int *);
-int		 to_integer(struct val *);
-void		 to_string(struct val *);
-int		 is_zero_or_null(struct val *);
-void		 nexttoken(int);
-void		 error(void);
-struct val	*eval6(void);
-struct val	*eval5(void);
-struct val	*eval4(void);
-struct val	*eval3(void);
-struct val	*eval2(void);
-struct val	*eval1(void);
-struct val	*eval0(void);
+static long	round(long, long);
 
-enum token {
-	OR, AND, EQ, LT, GT, ADD, SUB, MUL, DIV, MOD, MATCH, RP, LP,
-	NE, LE, GE, OPERAND, EOI
-};
+extern	ADDR	ditto;
+uvlong	expv;
 
-struct val {
-	enum {
-		integer,
-		string
-	} type;
+static WORD
+ascval(void)
+{
+	Rune r;
 
+	if (readchar() == 0)
+		return (0);
+	r = lastc;
+	while(quotchar())	/*discard chars to ending quote */
+		;
+	return((WORD) r);
+}
+
+/*
+ * read a floating point number
+ * the result must fit in a WORD
+ */
+
+static WORD
+fpin(char *buf)
+{
 	union {
-		char	       *s;
-		int		i;
-	} u;
-};
+		WORD w;
+		float f;
+	} x;
 
-enum token	token;
-struct val     *tokval;
-char	      **av;
-
-struct val *
-make_int(int i)
-{
-	struct val     *vp;
-
-	vp = (struct val *) malloc(sizeof(*vp));
-	if (vp == NULL) {
-		err(3, NULL);
-	}
-	vp->type = integer;
-	vp->u.i = i;
-	return vp;
+	x.f = atof(buf);
+	return (x.w);
 }
 
-
-struct val *
-make_str(char *s)
+WORD
+defval(WORD w)
 {
-	struct val     *vp;
-
-	vp = (struct val *) malloc(sizeof(*vp));
-	if (vp == NULL || ((vp->u.s = strdup(s)) == NULL)) {
-		err(3, NULL);
-	}
-	vp->type = string;
-	return vp;
-}
-
-
-void
-free_value(struct val *vp)
-{
-	if (vp->type == string)
-		free(vp->u.s);
-	free(vp);
-}
-
-
-/* determine if vp is an integer; if so, return it's value in *r */
-int
-is_integer(struct val *vp, int *r)
-{
-	char	       *s;
-	int		neg;
-	int		i;
-
-	if (vp->type == integer) {
-		*r = vp->u.i;
-		return 1;
-	}
-
-	/*
-	 * POSIX.2 defines an "integer" as an optional unary minus
-	 * followed by digits.
-	 */
-	s = vp->u.s;
-	i = 0;
-
-	neg = (*s == '-');
-	if (neg)
-		s++;
-
-	while (*s) {
-		if (!isdigit(*s))
-			return 0;
-
-		i *= 10;
-		i += *s - '0';
-
-		s++;
-	}
-
-	if (neg)
-		i *= -1;
-
-	*r = i;
-	return 1;
-}
-
-
-/* coerce to vp to an integer */
-int
-to_integer(struct val *vp)
-{
-	int		r;
-
-	if (vp->type == integer)
-		return 1;
-
-	if (is_integer(vp, &r)) {
-		free(vp->u.s);
-		vp->u.i = r;
-		vp->type = integer;
-		return 1;
-	}
-
-	return 0;
-}
-
-
-/* coerce to vp to an string */
-void
-to_string(struct val *vp)
-{
-	char	       *tmp;
-
-	if (vp->type == string)
-		return;
-
-	if (asprintf(&tmp, "%d", vp->u.i) == -1)
-		err(3, NULL);
-
-	vp->type = string;
-	vp->u.s = tmp;
-}
-
-int
-is_zero_or_null(struct val *vp)
-{
-	if (vp->type == integer) {
-		return (vp->u.i == 0);
-	} else {
-		return (*vp->u.s == 0 || (to_integer(vp) && vp->u.i == 0));
-	}
-	/* NOTREACHED */
-}
-
-void
-nexttoken(int pat)
-{
-	char	       *p;
-
-	if ((p = *av) == NULL) {
-		token = EOI;
-		return;
-	}
-	av++;
-
-	
-	if (pat == 0 && p[0] != '\0') {
-		if (p[1] == '\0') {
-			const char     *x = "|&=<>+-*/%:()";
-			char	       *i;	/* index */
-
-			if ((i = strchr(x, *p)) != NULL) {
-				token = i - x;
-				return;
-			}
-		} else if (p[1] == '=' && p[2] == '\0') {
-			switch (*p) {
-			case '<':
-				token = LE;
-				return;
-			case '>':
-				token = GE;
-				return;
-			case '!':
-				token = NE;
-				return;
-			}
-		}
-	}
-	tokval = make_str(p);
-	token = OPERAND;
-	return;
-}
-
-void
-error(void)
-{
-	errx(2, "syntax error");
-	/* NOTREACHED */
-}
-
-struct val *
-eval6(void)
-{
-	struct val     *v;
-
-	if (token == OPERAND) {
-		nexttoken(0);
-		return tokval;
-
-	} else if (token == RP) {
-		nexttoken(0);
-		v = eval0();
-
-		if (token != LP) {
-			error();
-			/* NOTREACHED */
-		}
-		nexttoken(0);
-		return v;
-	} else {
-		error();
-	}
-	/* NOTREACHED */
-}
-
-/* Parse and evaluate match (regex) expressions */
-struct val *
-eval5(void)
-{
-	regex_t		rp;
-	regmatch_t	rm[2];
-	char		errbuf[256];
-	int		eval;
-	struct val     *l, *r;
-	struct val     *v;
-
-	l = eval6();
-	while (token == MATCH) {
-		nexttoken(1);
-		r = eval6();
-
-		/* coerce to both arguments to strings */
-		to_string(l);
-		to_string(r);
-
-		/* compile regular expression */
-		if ((eval = regcomp(&rp, r->u.s, 0)) != 0) {
-			regerror(eval, &rp, errbuf, sizeof(errbuf));
-			errx(2, "%s", errbuf);
-		}
-
-		/* compare string against pattern --  remember that patterns
-		   are anchored to the beginning of the line */
-		if (regexec(&rp, l->u.s, 2, rm, 0) == 0 && rm[0].rm_so == 0) {
-			if (rm[1].rm_so >= 0) {
-				*(l->u.s + rm[1].rm_eo) = '\0';
-				v = make_str(l->u.s + rm[1].rm_so);
-
-			} else {
-				v = make_int((int)(rm[0].rm_eo - rm[0].rm_so));
-			}
-		} else {
-			if (rp.re_nsub == 0) {
-				v = make_int(0);
-			} else {
-				v = make_str("");
-			}
-		}
-
-		/* free arguments and pattern buffer */
-		free_value(l);
-		free_value(r);
-		regfree(&rp);
-
-		l = v;
-	}
-
-	return l;
-}
-
-/* Parse and evaluate multiplication and division expressions */
-struct val *
-eval4(void)
-{
-	struct val     *l, *r;
-	enum token	op;
-
-	l = eval5();
-	while ((op = token) == MUL || op == DIV || op == MOD) {
-		nexttoken(0);
-		r = eval5();
-
-		if (!to_integer(l) || !to_integer(r)) {
-			errx(2, "non-numeric argument");
-		}
-
-		if (op == MUL) {
-			l->u.i *= r->u.i;
-		} else {
-			if (r->u.i == 0) {
-				errx(2, "division by zero");
-			}
-			if (op == DIV) {
-				l->u.i /= r->u.i;
-			} else {
-				l->u.i %= r->u.i;
-			}
-		}
-
-		free_value(r);
-	}
-
-	return l;
-}
-
-/* Parse and evaluate addition and subtraction expressions */
-struct val *
-eval3(void)
-{
-	struct val     *l, *r;
-	enum token	op;
-
-	l = eval4();
-	while ((op = token) == ADD || op == SUB) {
-		nexttoken(0);
-		r = eval4();
-
-		if (!to_integer(l) || !to_integer(r)) {
-			errx(2, "non-numeric argument");
-		}
-
-		if (op == ADD) {
-			l->u.i += r->u.i;
-		} else {
-			l->u.i -= r->u.i;
-		}
-
-		free_value(r);
-	}
-
-	return l;
-}
-
-/* Parse and evaluate comparison expressions */
-struct val *
-eval2(void)
-{
-	struct val     *l, *r;
-	enum token	op;
-	int		v = 0, li, ri;
-
-	l = eval3();
-	while ((op = token) == EQ || op == NE || op == LT || op == GT ||
-	    op == LE || op == GE) {
-		nexttoken(0);
-		r = eval3();
-
-		if (is_integer(l, &li) && is_integer(r, &ri)) {
-			switch (op) {
-			case GT:
-				v = (li >  ri);
-				break;
-			case GE:
-				v = (li >= ri);
-				break;
-			case LT:
-				v = (li <  ri);
-				break;
-			case LE:
-				v = (li <= ri);
-				break;
-			case EQ:
-				v = (li == ri);
-				break;
-			case NE:
-				v = (li != ri);
-				break;
-			default:
-				break;
-			}
-		} else {
-			to_string(l);
-			to_string(r);
-
-			switch (op) {
-			case GT:
-				v = (strcoll(l->u.s, r->u.s) > 0);
-				break;
-			case GE:
-				v = (strcoll(l->u.s, r->u.s) >= 0);
-				break;
-			case LT:
-				v = (strcoll(l->u.s, r->u.s) < 0);
-				break;
-			case LE:
-				v = (strcoll(l->u.s, r->u.s) <= 0);
-				break;
-			case EQ:
-				v = (strcoll(l->u.s, r->u.s) == 0);
-				break;
-			case NE:
-				v = (strcoll(l->u.s, r->u.s) != 0);
-				break;
-			default:
-				break;
-			}
-		}
-
-		free_value(l);
-		free_value(r);
-		l = make_int(v);
-	}
-
-	return l;
-}
-
-/* Parse and evaluate & expressions */
-struct val *
-eval1(void)
-{
-	struct val     *l, *r;
-
-	l = eval2();
-	while (token == AND) {
-		nexttoken(0);
-		r = eval2();
-
-		if (is_zero_or_null(l) || is_zero_or_null(r)) {
-			free_value(l);
-			free_value(r);
-			l = make_int(0);
-		} else {
-			free_value(r);
-		}
-	}
-
-	return l;
-}
-
-/* Parse and evaluate | expressions */
-struct val *
-eval0(void)
-{
-	struct val     *l, *r;
-
-	l = eval1();
-	while (token == OR) {
-		nexttoken(0);
-		r = eval1();
-
-		if (is_zero_or_null(l)) {
-			free_value(l);
-			l = r;
-		} else {
-			free_value(r);
-		}
-	}
-
-	return l;
-}
-
-
-int
-main(int argc, char *argv[])
-{
-	struct val     *vp;
-
-	(void) setlocale(LC_ALL, "");
-
-	if (argc > 1 && !strcmp(argv[1], "--"))
-		argv++;
-
-	av = argv + 1;
-
-	nexttoken(0);
-	vp = eval0();
-
-	if (token != EOI) {
-		error();
-		/* NOTREACHED */
-	}
-
-	if (vp->type == integer)
-		printf("%d\n", vp->u.i);
+	if (expr(0))
+		return (expv);
 	else
-		printf("%s\n", vp->u.s);
+		return (w);
+}
 
-	exit(is_zero_or_null(vp));
+expr(int a)
+{	/* term | term dyadic expr |  */
+	int	rc;
+	WORD	lhs;
+
+	rdc();
+	reread();
+	rc=term(a);
+	while (rc) {
+		lhs = expv;
+		switch ((int)readchar()) {
+
+		case '+':
+			term(a|1);
+			expv += lhs;
+			break;
+
+		case '-':
+			term(a|1);
+			expv = lhs - expv;
+			break;
+
+		case '#':
+			term(a|1);
+			expv = round(lhs,expv);
+			break;
+
+		case '*':
+			term(a|1);
+			expv *= lhs;
+			break;
+
+		case '%':
+			term(a|1);
+			if(expv != 0)
+				expv = lhs/expv;
+			else{
+				if(lhs)
+					expv = 1;
+				else
+					expv = 0;
+			}
+			break;
+
+		case '&':
+			term(a|1);
+			expv &= lhs;
+			break;
+
+		case '|':
+			term(a|1);
+			expv |= lhs;
+			break;
+
+		case ')':
+			if ((a&2)==0)
+				error("unexpected `)'");
+
+		default:
+			reread();
+			return(rc);
+		}
+	}
+	return(rc);
+}
+
+term(int a)
+{	/* item | monadic item | (expr) | */
+	ADDR e;
+
+	switch ((int)readchar()) {
+
+	case '*':
+		term(a|1);
+		if (geta(cormap, expv, &e) < 0)
+			error("%r");
+		expv = e;
+		return(1);
+
+	case '@':
+		term(a|1);
+		if (geta(symmap, expv, &e) < 0)
+			error("%r");
+		expv = e;
+		return(1);
+
+	case '-':
+		term(a|1);
+		expv = -expv;
+		return(1);
+
+	case '~':
+		term(a|1);
+		expv = ~expv;
+		return(1);
+
+	case '(':
+		expr(2);
+		if (readchar()!=')')
+			error("syntax error: `)' expected");
+		return(1);
+
+	default:
+		reread();
+		return(item(a));
+	}
+}
+
+item(int a)
+{	/* name [ . local ] | number | . | ^  | <register | 'x | | */
+	char	*base;
+	char	savc;
+	uvlong e;
+	Symbol s;
+	char gsym[MAXSYM], lsym[MAXSYM];
+
+	readchar();
+	if (isfileref()) {
+		readfname(gsym);
+		rdc();			/* skip white space */
+		if (lastc == ':') {	/* it better be */
+			rdc();		/* skip white space */
+			if (!getnum(readchar))
+				error("bad number");
+			if (expv == 0)
+				expv = 1;	/* file begins at line 1 */
+			expv = file2pc(gsym, expv);
+			if (expv == -1)
+				error("%r");
+			return 1;
+		}
+		error("bad file location");
+	} else if (symchar(0)) {
+		readsym(gsym);
+		if (lastc=='.') {
+			readchar();	/* ugh */
+			if (lastc == '.') {
+				lsym[0] = '.';
+				readchar();
+				readsym(lsym+1);
+			} else if (symchar(0)) {
+				readsym(lsym);
+			} else
+				lsym[0] = 0;
+			if (localaddr(cormap, gsym, lsym, &e, rget) < 0)
+				error("%r");
+			expv = e;
+		}
+		else {
+			if (lookup(0, gsym, &s) == 0)
+				error("symbol not found");
+			expv = s.value;
+		}
+		reread();
+	} else if (getnum(readchar)) {
+		;
+	} else if (lastc=='.') {
+		readchar();
+		if (!symchar(0) && lastc != '.') {
+			expv = dot;
+		} else {
+			if (findsym(rget(cormap, mach->pc), CTEXT, &s) == 0)
+				error("no current function");
+			if (lastc == '.') {
+				lsym[0] = '.';
+				readchar();
+				readsym(lsym+1);
+			} else
+				readsym(lsym);
+			if (localaddr(cormap, s.name, lsym, &e, rget) < 0)
+				error("%r");
+			expv = e;
+		}
+		reread();
+	} else if (lastc=='"') {
+		expv=ditto;
+	} else if (lastc=='+') {
+		expv=inkdot(dotinc);
+	} else if (lastc=='^') {
+		expv=inkdot(-dotinc);
+	} else if (lastc=='<') {
+		savc=rdc();
+		base = regname(savc);
+		expv = rget(cormap, base);
+	}
+	else if (lastc=='\'')
+		expv = ascval();
+	else if (a)
+		error("address expected");
+	else {
+		reread();
+		return(0);
+	}
+	return(1);
+}
+
+#define	MAXBASE	16
+
+/* service routines for expression reading */
+getnum(int (*rdf)(void))
+{
+	char *cp;
+	int base, d;
+	BOOL fpnum;
+	char num[MAXLIN];
+
+	base = 0;
+	fpnum = FALSE;
+	if (lastc == '#') {
+		base = 16;
+		(*rdf)();
+	}
+	if (convdig(lastc) >= MAXBASE)
+		return (0);
+	if (lastc == '0')
+		switch ((*rdf)()) {
+		case 'x':
+		case 'X':
+			base = 16;
+			(*rdf)();
+			break;
+
+		case 't':
+		case 'T':
+			base = 10;
+			(*rdf)();
+			break;
+
+		case 'o':
+		case 'O':
+			base = 8;
+			(*rdf)();
+			break;
+		default:
+			if (base == 0)
+				base = 8;
+			break;
+		}
+	if (base == 0)
+		base = 10;
+	expv = 0;
+	for (cp = num, *cp = lastc; ;(*rdf)()) {
+		if ((d = convdig(lastc)) < base) {
+			expv *= base;
+			expv += d;
+			*cp++ = lastc;
+		}
+		else if (lastc == '.') {
+			fpnum = TRUE;
+			*cp++ = lastc;
+		} else {
+			reread();
+			break;
+		}
+	}
+	if (fpnum)
+		expv = fpin(num);
+	return (1);
+}
+
+void
+readsym(char *isymbol)
+{
+	char	*p;
+	Rune r;
+
+	p = isymbol;
+	do {
+		if (p < &isymbol[MAXSYM-UTFmax-1]){
+			r = lastc;
+			p += runetochar(p, &r);
+		}
+		readchar();
+	} while (symchar(1));
+	*p = 0;
+}
+
+void
+readfname(char *filename)
+{
+	char	*p;
+	Rune	c;
+
+	/* snarf chars until un-escaped char in terminal char set */
+	p = filename;
+	do {
+		if ((c = lastc) != '\\' && p < &filename[MAXSYM-UTFmax-1])
+			p += runetochar(p, &c);
+		readchar();
+	} while (c == '\\' || strchr(CMD_VERBS, lastc) == 0);
+	*p = 0;
+	reread();
+}
+
+convdig(int c)
+{
+	if (isdigit(c))
+		return(c-'0');
+	else if (!isxdigit(c))
+		return(MAXBASE);
+	else if (isupper(c))
+		return(c-'A'+10);
+	else
+		return(c-'a'+10);
+}
+
+symchar(int dig)
+{
+	if (lastc=='\\') {
+		readchar();
+		return(TRUE);
+	}
+	return(isalpha(lastc) || lastc>0x80 || lastc=='_' || dig && isdigit(lastc));
+}
+
+static long
+round(long a, long b)
+{
+	long w;
+
+	w = (a/b)*b;
+	if (a!=w)
+		w += b;
+	return(w);
 }
