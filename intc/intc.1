@@ -1,0 +1,26 @@
+.TH INTC 1
+.SH NAME
+intc \- integer arithmetic utility
+.SH OPERATION
+Read code from stdin, and do it.
+.br
+intc has postfix syntax and stackish semantics. Numbers read are pushed onto the stack. Operators pop operands off the stack and push values back, if any.
+.SS OPERATORS
+.TP
+.B c
+Push a copy of top value, which NOT pop.
+.TP
+.B x
+Swap top two values.
+.TP
+.B q
+Quit with code atop stack.
+.TP
+.B p
+Print in base atop stack the value beneath it.
+.TP
+.B P
+Print the character atop stack.
+.TP
+.B +, -, &, |, ^
+Binary. Plus, minus, bitwise AND, bitwise IOR, bitwise XOR.
